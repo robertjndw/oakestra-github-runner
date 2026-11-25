@@ -25,8 +25,9 @@ dashboard and talks to two APIs: GitHub and the Oakestra system manager.
 
 On the GitHub side it uses runner scale sets, the same mechanism as GitHub's own Actions Runner
 Controller for Kubernetes, through the [`actions/scaleset`](https://github.com/actions/scaleset)
-client. The addon keeps a long-poll connection open to GitHub and is told when a job is waiting.
-Nothing has to reach the addon from the internet, so it also works on a cluster behind NAT.
+client. The addon keeps a connection to GitHub open, and GitHub uses it to say when a job is
+waiting. Nothing has to reach the addon from the internet, so it also works on a cluster behind
+NAT.
 
 A runner size is called a pool. A pool has a name, a number of vCPUs, an amount of memory and a
 limit on how many jobs it runs at once. On GitHub a pool is one scale set, and its name is what
@@ -40,8 +41,8 @@ When a job is queued for a pool, this happens:
 3. Oakestra schedules the container on a worker. The runner connects to GitHub and takes the job.
 4. When the job ends the runner exits, and the addon deletes the service.
 
-If a runner crashes or never starts, the addon deletes it as well and starts a new one while the
-job is still waiting. It has to: Oakestra would otherwise keep redeploying the dead container.
+If a runner crashes or never starts, the addon deletes it too and starts a new one if the job
+is still waiting. Otherwise Oakestra would keep restarting the dead container.
 
 Connections, pools and the job history are kept in a SQLite file on the addon's volume. Tokens
 and keys in it are encrypted.
@@ -63,8 +64,8 @@ Other things to know:
 - A job starts 15 to 30 seconds after it was queued. The first job on a worker takes longer
   because the image has to be pulled.
 - Workers need outbound internet access. Oakestra's default overlay network gives them that.
-- The runner registration is handed to the container as an environment variable, so the Oakestra
-  user of the addon can read it. It works once and then expires.
+- The runner registration is passed to the container as an environment variable, so the addon's
+  Oakestra user can read it. It works only once.
 - Runners are containers, not virtual machines. See [Security](#security) before you let
   untrusted code run on them.
 - GitHub marks the scale set client as a public preview.
@@ -93,21 +94,20 @@ anything. `GHR_AUTH=off` removes all of that and is meant for a laptop, never fo
 
 ### Jobs run other people's code on your nodes
 
-This is the part to think about. Whoever can get a workflow to run on a pool runs commands on
+This is the important part. Anyone who can get a workflow to run on a pool can run commands on
 one of your workers. For a private repository that is everyone with push access. For a public
 repository it can be anyone who opens a pull request from a fork, which is why GitHub advises
-against self-hosted runners on public repositories. Organization runners refuse public
-repositories unless you allow them in the runner group; leave that off unless you know what you
-are doing.
+against self-hosted runners on public repositories. By default, public repositories cannot use
+an organization's runners. Only change that in the runner group if you know what you are doing.
 
 What a job gets:
 
 - A fresh container that is deleted after the job. Nothing a job writes is there for the next
   one.
 - No privileged mode and no access to the node's Docker or containerd socket.
-- But only container isolation. Runners share the kernel with the node and with everything else
-  running on it. Blacksmith and similar services put each job in its own virtual machine; this
-  addon does not.
+- Only a container, not a virtual machine. Runners share the kernel with the node and with
+  everything else running on it. Services like Blacksmith put each job in its own virtual
+  machine. This addon does not.
 - No CPU or memory cap. A job can use up a node and slow down the other services on it.
 - Network access. A runner has to reach the internet, and you should assume it can also reach
   other services on the Oakestra overlay network and whatever the worker can reach on its local
@@ -128,24 +128,24 @@ connections without authentication. So treat the addon as part of the control pl
 took over its container, they could do far more than start runners. The container itself runs
 as a non-root user, without extra capabilities, host mounts or the Docker socket.
 
-Towards Oakestra, the addon acts as the user you give it. That user needs no admin role. It can
-create and delete services, which is what the addon does with it.
+In Oakestra, the addon acts as the user you give it. That user does not need the admin role. It
+can create and delete services, and that is all the addon uses it for.
 
-Towards GitHub, it depends on how you connect:
+On GitHub, it depends on how you connect:
 
 - A GitHub App on an organization can manage self-hosted runners and nothing else. It cannot
   read code.
 - A GitHub App on a single repository needs "Administration", which also covers the
   repository's settings. GitHub offers nothing narrower.
-- A classic personal access token needs `admin:org` or `repo`. Both go well beyond runners and
-  are tied to your account. Prefer the App.
+- A classic personal access token needs `admin:org` or `repo`. Both allow much more than
+  managing runners, and the token belongs to your account. Use the App if you can.
 
 ### Stored secrets
 
 The GitHub App key, tokens and the Oakestra password are encrypted in the addon's database.
-By default the encryption key is a file on the same volume, so this protects a copy or backup
-of the database, not someone who can read the whole volume. Set `GHR_ENCRYPTION_KEY` if you
-want the key to live elsewhere.
+By default the encryption key is a file on the same volume. That protects a copy or backup of
+the database, but not against someone who can read the whole volume. Set `GHR_ENCRYPTION_KEY`
+if you want to keep the key somewhere else.
 
 The one-time runner registration is passed to the runner as an environment variable. It is
 stored in Oakestra as part of the service until the service is deleted, and it stops working
@@ -158,12 +158,108 @@ The default runner image is `ghcr.io/actions/actions-runner:latest`. Pin a versi
 
 - Oakestra with the Go addons engine and dashboard-v2. Both are on the `feat/marketplace-api`
   branch at the time of writing.
-- An Oakestra user that only this addon uses. Oakestra has no service accounts, and a service is
-  only visible to the user who created it. If you used your own account, nobody else could see
-  the runners.
+- An Oakestra user that only this addon uses. Oakestra has no service accounts, and only the
+  user who created a service can see it. If you used your own account, nobody else could see the
+  runners.
 - Admin rights on the GitHub organization or repository.
 
 ## Setup
+
+<details>
+<summary>Setup with screenshots</summary>
+
+<br>
+
+This follows steps 2 to 5 below. The dashboard screenshots use made-up data, and `my-org`
+stands for your GitHub organization.
+
+#### Overview
+
+After you install the addon, open GitHub Runners in the dashboard sidebar. The overview shows
+which setup steps are still open, with a button for each.
+
+![Setup checklist on the overview page](docs/setup/oakestra-overview-setup.png)
+
+#### Oakestra user
+
+Create a user on the dashboard's Users page. Then enter its username and password under GitHub
+Runners > Settings. "Login works" means the addon could log in with it.
+
+![Oakestra service user with a working login](docs/setup/oakestra-service-user.png)
+
+#### Connect GitHub with a GitHub App
+
+In Settings, enter a name for the App and the URL of your organization or repository. Then press
+"Continue on GitHub".
+
+![GitHub App form in the dashboard](docs/setup/oakestra-app-form.png)
+
+GitHub shows the App with everything filled in. You can change the name if you like. Press
+"Create GitHub App for my-org".
+
+![GitHub asks to create the App](docs/setup/github-create-app.png)
+
+GitHub sends you back to Settings. Press "Install the GitHub App". On GitHub, pick the
+organization, choose which repositories may use the runners, and press "Install". Back in
+Settings, press "Refresh installations" and then "Use this installation".
+
+![Connection waiting for its installation](docs/setup/oakestra-install.png)
+
+The connection now shows as ready.
+
+![Ready connection in the list](docs/setup/oakestra-connected.png)
+
+#### Or connect GitHub with a token
+
+If you don't want a GitHub App, use a token instead. The links below open GitHub's token form
+with the right settings already chosen. Check the expiry date, press "Generate token", and paste
+the token into "Connect with a token" in Settings.
+
+- Classic token for an organization:
+  [token with `admin:org`](https://github.com/settings/tokens/new?scopes=admin:org&description=Oakestra+runners).
+  For a repository, tick `repo` instead.
+
+  ![Classic token form with admin:org ticked](docs/setup/github-token-classic.png)
+
+- Fine-grained token for an organization:
+  [token with "Self-hosted runners"](https://github.com/settings/personal-access-tokens/new?name=Oakestra+runners&organization_self_hosted_runners=write).
+  Choose your organization as the resource owner. For a repository, select the repository and
+  add "Administration: read and write" instead.
+
+  ![Fine-grained token form with the Self-hosted runners permission](docs/setup/github-token-fine-grained.png)
+
+#### Create a pool
+
+On the Pools page, press "Create pool". When you pick a size, the name is filled in for you.
+That name is what you put in `runs-on`.
+
+![Create pool dialog](docs/setup/oakestra-create-pool.png)
+
+![Pools page with two pools](docs/setup/oakestra-pools.png)
+
+On GitHub, each pool shows up under your organization's Settings > Actions > Runners, in the
+"Default" runner group unless you picked another one. The runner group decides which
+repositories may use the pool. Leave "Allow public repositories" off unless you have read
+[Security](#security).
+
+![Default runner group on GitHub](docs/setup/github-runner-group.png)
+
+#### Use it
+
+The overview now shows a `runs-on` line for each pool. Copy one into a workflow and push.
+
+![Overview with a runs-on line for each pool](docs/setup/oakestra-overview.png)
+
+Each queued job gets its own runner. It shows as "Pending" while Oakestra starts it and as
+"Busy" while it runs the job. It is deleted when the job is done.
+
+![Runners page with busy and pending runners](docs/setup/oakestra-runners.png)
+
+The Jobs page keeps the history.
+
+![Jobs page with finished and running jobs](docs/setup/oakestra-jobs.png)
+
+</details>
 
 ### 1. Install the addon
 
@@ -183,18 +279,18 @@ Then open the Addons page in the dashboard and install `local/github-runner`. Th
 shows the definition and asks you to confirm it. The addon wants one permission, `core_network`,
 which lets it reach the system manager.
 
-There is a catch with locally registered addons. The dashboard only loads an addon's pages when
-the id built into them matches the id the engine reports, and for a local registration the
-engine reports `local--github-runner`. The published image is built for `github-runner`. So for
-a local registration, build the image yourself and put its name into `addon/github-runner.json`
-before you register it:
+If you register the addon locally like this, you need to build the image yourself. The
+dashboard only loads an addon's pages if the id built into them matches the id the addons
+engine reports. For a local registration that id is `local--github-runner`, but the published
+image is built for `github-runner`. So build your own image and put its name into
+`addon/github-runner.json` before you register it:
 
 ```sh
 make image ADDON_ID=local--github-runner VERSION=dev
 ```
 
 After the install, "GitHub Runners" shows up in the dashboard sidebar. Its overview page lists
-the three steps that follow and marks the ones that are done.
+the next three steps and ticks them off as you do them.
 
 ### 2. Give the addon an Oakestra user
 
@@ -205,15 +301,16 @@ Go to GitHub Runners > Settings and enter the username and password under "Oakes
 user". The addon tries to log in right away and shows whether that worked.
 
 You can also set `OAKESTRA_USERNAME` and `OAKESTRA_PASSWORD` in the definition instead. Only do
-that on a private setup: the marketplace serves definitions to anyone who can reach its port.
+that on a private setup, because the marketplace shows definitions to anyone who can reach its
+port.
 
 ### 3. Connect GitHub
 
 You can connect an organization or a single repository. With an organization, every repository
 that the runner group allows can use the pools. With a repository, only that one can.
 
-The GitHub App route is the better one, because the addon gets short-lived tokens and nothing is
-tied to a person:
+A GitHub App is the better choice. The addon only gets short-lived tokens, and nothing is tied
+to a person's account:
 
 1. Under "Connect with a GitHub App", enter a name and the URL, for example
    `https://github.com/my-org`, and press "Continue on GitHub".
@@ -239,8 +336,8 @@ Go to GitHub Runners > Pools and press "Create pool".
   `oakestra-4vcpu-ubuntu-2404`. You can change it, but it has to be unique on the GitHub side.
 - "Max runners" is how many jobs of this pool run at the same time. More jobs than that wait in
   GitHub's queue.
-- Cluster and node are optional and pin the runners to one place. You need them for an arm64
-  pool, see above.
+- Cluster and node are optional and keep the runners on that cluster or node. You need them for
+  an arm64 pool, see [What does not work](#what-does-not-work).
 - The runner group has to exist on GitHub already. Leave it empty for the default group.
 
 ### 5. Use it
@@ -284,13 +381,13 @@ Go through these in order:
    organization's runners until you allow that in the runner group settings.
 6. Check "Max runners". The pool may simply be full.
 
-The addon's log has more detail: `docker logs` on the container whose name ends in
+For more detail, look at the addon's log with `docker logs` on the container whose name ends in
 `github-runner--controller`.
 
 ## Configuration
 
-These are environment variables of the container. The defaults fit an addon that is installed on
-the root orchestrator, so you normally do not set any of them.
+The addon is configured with environment variables. The defaults work for an addon installed on
+the root orchestrator, so normally you don't need to set any of them.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -317,7 +414,7 @@ make run      # backend on :8080 without authentication, data in ./data
 make image    # container image
 ```
 
-The UI packages `@oakestra/*` are on GitHub Packages, which wants a token even for public
+The UI packages `@oakestra/*` are on GitHub Packages, which needs a token even for public
 packages. [ui/README.md](ui/README.md) explains that, and how to run the UI in a local dashboard
 against a local backend.
 
@@ -337,4 +434,4 @@ addon/                addon definition
 
 Push a tag that starts with `v`. CI builds the image for amd64 and arm64 and attaches a
 `github-runner.json` to the release, with the version and the image digest filled in. Addon
-catalogs only accept images that are pinned by digest, so that file is the one to submit.
+catalogs only accept images pinned by digest, so submit that file.
