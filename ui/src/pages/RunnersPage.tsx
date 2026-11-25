@@ -12,7 +12,9 @@ import { QueryError } from '../components/QueryError';
 import { useClusterNames } from '../components/use-cluster-names';
 import { formatAge } from '../lib/format';
 
-const column = createDataTableColumnHelper<Runner>();
+type RunnerRow = Runner & { pool_name: string; cluster_name: string };
+
+const column = createDataTableColumnHelper<RunnerRow>();
 
 export default function RunnersPage() {
   const runners = useRunners();
@@ -25,6 +27,19 @@ export default function RunnersPage() {
     [pools.data],
   );
 
+  // DataTable caches what an accessor returns per row and only rebuilds its rows when `data`
+  // changes. A name looked up inside an accessor would stay stuck on the id when the lookup
+  // loads after the list, so the names are resolved into the rows instead.
+  const rows = useMemo(
+    () =>
+      runners.data?.map((runner) => ({
+        ...runner,
+        pool_name: poolNames.get(runner.pool_id) ?? runner.pool_id,
+        cluster_name: clusterName(runner.cluster_id),
+      })),
+    [runners.data, poolNames, clusterName],
+  );
+
   const columns = useMemo(
     () =>
       column.columns([
@@ -32,10 +47,7 @@ export default function RunnersPage() {
           header: 'Name',
           cell: (info) => <span className="ghr:font-mono ghr:text-xs">{info.getValue()}</span>,
         }),
-        column.accessor((runner) => poolNames.get(runner.pool_id) ?? runner.pool_id, {
-          id: 'pool',
-          header: 'Pool',
-        }),
+        column.accessor('pool_name', { id: 'pool', header: 'Pool' }),
         column.accessor('state', {
           header: 'State',
           cell: (info) => <RunnerStateBadge state={info.getValue()} />,
@@ -45,10 +57,7 @@ export default function RunnersPage() {
           header: 'Oakestra status',
           cell: (info) => <OakestraStatusBadge status={info.getValue() || undefined} />,
         }),
-        column.accessor((runner) => clusterName(runner.cluster_id), {
-          id: 'cluster',
-          header: 'Cluster',
-        }),
+        column.accessor('cluster_name', { id: 'cluster', header: 'Cluster' }),
         column.accessor((runner) => runner.worker_id ?? '-', {
           id: 'worker',
           header: 'Worker',
@@ -65,7 +74,7 @@ export default function RunnersPage() {
           cell: (info) => formatAge(info.getValue()),
         }),
       ]),
-    [poolNames, clusterName],
+    [],
   );
 
   return (
@@ -80,7 +89,7 @@ export default function RunnersPage() {
       <DataTable
         label="Runners"
         columns={columns}
-        data={runners.data}
+        data={rows}
         isLoading={runners.isPending}
         getRowId={(runner) => runner.name}
         emptyState={

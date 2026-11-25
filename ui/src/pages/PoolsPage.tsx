@@ -22,7 +22,9 @@ import { READ_ONLY_REASON, ReadOnlyNotice, useCanWrite } from '../components/per
 import { formatMemory } from '../lib/format';
 import { PoolDialog } from './PoolDialog';
 
-const column = createDataTableColumnHelper<Pool>();
+type PoolRow = Pool & { connection_name: string };
+
+const column = createDataTableColumnHelper<PoolRow>();
 
 export default function PoolsPage() {
   const pools = usePools();
@@ -37,6 +39,18 @@ export default function PoolsPage() {
   const connectionNames = useMemo(
     () => new Map((connections.data ?? []).map((connection) => [connection.id, connection.name])),
     [connections.data],
+  );
+
+  // DataTable caches what an accessor returns per row and only rebuilds its rows when `data`
+  // changes. A name looked up inside an accessor would stay stuck on the id when the lookup
+  // loads after the list, so the names are resolved into the rows instead.
+  const rows = useMemo(
+    () =>
+      pools.data?.map((pool) => ({
+        ...pool,
+        connection_name: connectionNames.get(pool.connection_id) ?? pool.connection_id,
+      })),
+    [pools.data, connectionNames],
   );
 
   const columns = useMemo(
@@ -56,10 +70,7 @@ export default function PoolsPage() {
             </div>
           ),
         }),
-        column.accessor((pool) => connectionNames.get(pool.connection_id) ?? pool.connection_id, {
-          id: 'connection',
-          header: 'Connection',
-        }),
+        column.accessor('connection_name', { id: 'connection', header: 'Connection' }),
         column.accessor('vcpus', { header: 'vCPUs', meta: { numeric: true } }),
         column.accessor((pool) => formatMemory(pool.memory_mb), { id: 'memory', header: 'Memory' }),
         column.accessor((pool) => pool.arch || 'any', { id: 'arch', header: 'Arch' }),
@@ -98,7 +109,7 @@ export default function PoolsPage() {
           ),
         }),
       ]),
-    [connectionNames, canWrite],
+    [canWrite],
   );
 
   const createButton = (
@@ -131,7 +142,7 @@ export default function PoolsPage() {
       <DataTable
         label="Pools"
         columns={columns}
-        data={pools.data}
+        data={rows}
         isLoading={pools.isPending}
         getRowId={(pool) => pool.id}
         emptyState={

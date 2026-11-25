@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { errorResponse, fakeBackend, pool, readyConnection, renderPage } from '../test/host';
+import { deferred, errorResponse, fakeBackend, pool, readyConnection, renderPage } from '../test/host';
 import PoolsPage from './PoolsPage';
 
 const routes = {
@@ -17,6 +17,16 @@ describe('PoolsPage', () => {
 
     expect(await screen.findByText('scale set rejected the name')).toBeTruthy();
     expect(screen.getByText('Error')).toBeTruthy();
+  });
+
+  it('resolves connection names that arrive after the pools', async () => {
+    const connections = deferred<unknown>();
+    const { addonFetch } = fakeBackend({ ...routes, 'GET /connections': () => connections.promise });
+    renderPage(<PoolsPage />, { addonFetch });
+
+    expect(await screen.findByText('c1')).toBeTruthy();
+    connections.resolve([readyConnection]);
+    expect(await screen.findByText('acme')).toBeTruthy();
   });
 
   it('disables creating and changing pools for non-admins', async () => {

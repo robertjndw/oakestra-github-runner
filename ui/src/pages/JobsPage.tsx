@@ -16,7 +16,9 @@ const ALL = 'all';
 // stores an empty result for unfinished jobs, which the result filter cannot select.
 const RESULTS = ['succeeded', 'failed', 'canceled', 'abandoned', 'skipped'];
 
-const column = createDataTableColumnHelper<Job>();
+type JobRow = Job & { pool_name: string; cluster_name: string };
+
+const column = createDataTableColumnHelper<JobRow>();
 
 function workflowName(ref: string | undefined): string {
   if (!ref) return '-';
@@ -36,7 +38,20 @@ export default function JobsPage() {
     () => new Map((pools.data ?? []).map((pool) => [pool.id, pool.name])),
     [pools.data],
   );
-  const items = useMemo(() => jobs.data?.pages.flatMap((page) => page.items), [jobs.data]);
+  // DataTable caches what an accessor returns per row and only rebuilds its rows when `data`
+  // changes. A name looked up inside an accessor would stay stuck on the id when the lookup
+  // loads after the list, so the names are resolved into the rows instead.
+  const items = useMemo(
+    () =>
+      jobs.data?.pages.flatMap((page) =>
+        page.items.map((job) => ({
+          ...job,
+          pool_name: poolNames.get(job.pool_id) ?? job.pool_id,
+          cluster_name: job.cluster_id ? clusterName(job.cluster_id) : '-',
+        })),
+      ),
+    [jobs.data, poolNames, clusterName],
+  );
 
   const columns = useMemo(
     () =>
@@ -44,7 +59,7 @@ export default function JobsPage() {
         column.accessor('repository', { header: 'Repository' }),
         column.accessor((job) => workflowName(job.workflow_ref), { id: 'workflow', header: 'Workflow' }),
         column.accessor('job_name', { header: 'Job' }),
-        column.accessor((job) => poolNames.get(job.pool_id) ?? job.pool_id, { id: 'pool', header: 'Pool' }),
+        column.accessor('pool_name', { id: 'pool', header: 'Pool' }),
         column.accessor((job) => job.result ?? '', {
           id: 'result',
           header: 'Result',
@@ -63,17 +78,14 @@ export default function JobsPage() {
           header: 'Runner',
           cell: (info) => <span className="ghr:font-mono ghr:text-xs">{info.getValue()}</span>,
         }),
-        column.accessor((job) => (job.cluster_id ? clusterName(job.cluster_id) : '-'), {
-          id: 'cluster',
-          header: 'Cluster',
-        }),
+        column.accessor('cluster_name', { id: 'cluster', header: 'Cluster' }),
         column.accessor((job) => job.worker_id ?? '-', {
           id: 'worker',
           header: 'Worker',
           cell: (info) => <span className="ghr:font-mono ghr:text-xs">{info.getValue()}</span>,
         }),
       ]),
-    [poolNames, clusterName],
+    [],
   );
 
   const filtered = poolId !== '' || result !== '';

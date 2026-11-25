@@ -19,8 +19,8 @@ const json = (data: unknown, status = 200) =>
 
 /**
  * Fake addon backend for `addonFetch`. Keys are "METHOD /path" below /api. A handler returns the
- * JSON body, or a Response for other statuses. Unknown routes answer 404 so a page cannot call
- * more than a test expects without noticing.
+ * JSON body, or a Response for other statuses, or a promise of either to hold the answer back.
+ * Unknown routes answer 404 so a page cannot call more than a test expects without noticing.
  */
 export function fakeBackend(routes: Record<string, Handler | unknown>) {
   const calls: BackendCall[] = [];
@@ -34,10 +34,17 @@ export function fakeBackend(routes: Record<string, Handler | unknown>) {
     if (route === undefined) {
       return json({ code: 'not_found', message: `No fake route for ${request.method} ${path}` }, 404);
     }
-    const value = typeof route === 'function' ? (route as Handler)(request, body) : route;
+    const value = typeof route === 'function' ? await (route as Handler)(request, body) : route;
     return value instanceof Response ? value : json(value);
   };
   return { addonFetch, calls };
+}
+
+/** A promise the test resolves by hand, for answers that must arrive after others. */
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
 }
 
 export function errorResponse(status: number, code: string, message: string) {

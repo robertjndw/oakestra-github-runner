@@ -1,7 +1,7 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { fakeBackend, pool, renderPage } from '../test/host';
+import { deferred, fakeBackend, pool, renderPage } from '../test/host';
 import { ClusterRunnersWidget } from '../widgets/ClusterRunnersWidget';
 import RunnersPage from './RunnersPage';
 
@@ -35,6 +35,27 @@ describe('RunnersPage', () => {
     expect(screen.getByText('RUNNING')).toBeTruthy();
     expect(await screen.findByText('edge')).toBeTruthy();
     expect(screen.getByText('#42')).toBeTruthy();
+  });
+
+  it('resolves pool and cluster names that arrive after the runners', async () => {
+    const pools = deferred<unknown>();
+    const clusters = deferred<unknown>();
+    const backend = fakeBackend({
+      'GET /runners': [runner('ghr1', { cluster_id: 'k1' })],
+      'GET /pools': () => pools.promise,
+      'GET /clusters': () => clusters.promise,
+    });
+    renderPage(<RunnersPage />, { addonFetch: backend.addonFetch });
+
+    expect(await screen.findByText('ghr1')).toBeTruthy();
+    expect(screen.getByText('p1')).toBeTruthy();
+    expect(screen.getByText('k1')).toBeTruthy();
+
+    pools.resolve([pool]);
+    clusters.resolve([{ id: 'k1', name: 'edge', active_nodes: 1, vcpus: 1, memory_mb: 1 }]);
+
+    expect(await screen.findByText('oakestra-4vcpu-ubuntu-2404')).toBeTruthy();
+    expect(await screen.findByText('edge')).toBeTruthy();
   });
 });
 
