@@ -1,0 +1,26 @@
+{
+  "name": "github-runner",
+  "version": "0.1.0",
+  "display_name": "GitHub Runners",
+  "description": "Run GitHub Actions jobs on your Oakestra cluster. Connect GitHub once, then set runs-on to a pool label such as oakestra-4vcpu-ubuntu-2404. Every job gets a fresh single-use runner container.",
+  "category": "ci",
+  "tags": ["ci", "github", "github-actions", "runners"],
+  "homepage": "https://github.com/robertjndw/oakestra-github-runner",
+  "permissions": {
+    "core_network": true
+  },
+  "services": [
+    {
+      "service_name": "controller",
+      "image": "ghcr.io/robertjndw/oakestra-github-runner:latest",
+      "networks": ["oakestra"],
+      "volumes": ["data:/data"],
+      "environment": {
+        "OAKESTRA_API_URL": "http://system_manager:10000",
+        "JWT_GENERATOR_URL": "http://jwt_generator:10011"
+      }
+    }
+  ],
+  "volumes": [{ "name": "data" }],
+  "ui": { "service": "controller", "sdk": "^0.1.0" }
+}

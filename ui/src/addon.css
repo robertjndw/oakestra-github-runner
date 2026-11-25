@@ -1,0 +1,13 @@
+/*
+ * Utilities only. The shell already loaded Tailwind's reset and the token values; a second
+ * preflight here would reset the shell's styles once the addon loads.
+ *
+ * prefix(ghr) puts the prefix on every class of this addon. This stylesheet loads after the
+ * shell's, so an unprefixed utility generated here could beat the shell's own classes. The
+ * build rejects any. The prefix must equal `prefix` in vite.config.ts.
+ */
+@import 'tailwindcss/theme.css' layer(theme) prefix(ghr);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import '@oakestra/ui/theme.css';
+
+@source './';
